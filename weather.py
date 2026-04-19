@@ -1,70 +1,83 @@
 """
 天氣模組 - 取得天氣資料
-使用 Open-Meteo API (免費不需 Key) + Gemini AI 回答
+包含：天氣、天氣預報、天氣預警
 """
 
 import requests
 
-# Gemini API Key - 用於 AI 回答
 GEMINI_API_KEY = "AIzaSyABqGlwKaKo4lQQ4XYpA_FIUXNU61d9jfs"
 
 def get_weather(lat=25.0330, lon=121.5654):
-    """
-    取得天氣資料
-    lat: 緯度, default=25.0330 (台北)
-    lon: 經度, default=121.5654 (台北)
-    """
-    # Open-Meteo API URL - 免費天氣 API
+    """取得目前天氣"""
     url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true&daily=temperature_2m_max,temperature_2m_min&timezone=auto"
-    
-    # 發送 HTTP 請求取得 JSON 資料
     r = requests.get(url).json()
-    
-    # 取出目前天氣資料
     current = r["current_weather"]
     daily = r["daily"]
-    
-    # 組合成天氣訊息
     temp_min = daily['temperature_2m_min'][0]
     temp_max = daily['temperature_2m_max'][0]
     return f"🌤 台灣台北天氣\n\n目前: {current['temperature']}°C\n風速: {current['windspeed']} km/h\n今天: {temp_min}~{temp_max}°C"
 
-def get_weather_ai(location="台北"):
-    """
-    用 Gemini AI 回答天氣（更自然）
-    location: 地點
-    """
-    # 問 AI 的問題
-    prompt = f"請用繁體中文回覆，只給一句話的天氣描述：{location} 的天氣如何？"
+def get_weather_forecast(lat=25.0330, lon=121.5654):
+    """取得一週天氣預報"""
+    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=7"
+    try:
+        r = requests.get(url).json()
+        daily = r.get("daily", {})
+        times = daily.get("time", [])
+        maxTemps = daily.get("temperature_2m_max", [])
+        minTemps = daily.get("temperature_2m_min", [])
+        codes = daily.get("weather_code", [])
+        
+        # 天氣代碼翻譯
+        weather_desc = {
+            0: "☀️ 晴", 1: "🌤️ 晴時多雲", 2: "⛅ 多雲", 3: "☁️ 陰",
+            45: "🌫️ 霧", 48: "🌫️ 霧", 51: "🌧️ 小雨", 53: "🌧️ 中雨", 55: "🌧️ 大雨",
+            61: "🌧️ 雨", 63: "🌧️ 雨", 65: "🌧️ 大雨", 71: "❄️ 雪", 73: "❄️ 雪",
+            80: "🌧️ 陣雨", 81: "🌧️ 陣雨", 82: "🌧️ 強陣雨", 95: "⛈️ 雷雨", 96: "⛈️ 雷雨"
+        }
+        
+        result = "📅 一週天氣預報\n\n"
+        for i in range(min(7, len(times))):
+            date = times[i][-5:]  # 取月日
+            desc = weather_desc.get(codes[i], f"🌤️ {codes[i]}")
+            result += f"{date}: {minTemps[i]}~{maxTemps[i]}°C {desc}\n"
+        
+        return result
+    except:
+        return "📅 無法取得天氣預報"
+
+def get_weather_alert():
+    """取得天氣預警 (地震、颱風)"""
+    prompt = "請用繁體中文列出目前台灣的天氣預警，包括：\n1. 地震資訊（如果有）\n2. 颱風資訊（如果有）\n3. 其他天氣警訊\n如果沒有請說「目前沒有預警」。請只列出重點，不要超過3句。"
     
-    # Gemini API URL
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
-    
-    # POST 請求需要 JSON 格式
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     headers = {"Content-Type": "application/json"}
     
     try:
-        r = requests.post(url, json=payload, headers=headers)
+        r = requests.post(url, json=payload, headers=headers, timeout=10)
         data = r.json()
-        
-        # 檢查是否有回應
         if "candidates" in data:
-            return "🌤 " + data["candidates"][0]["content"]["parts"][0]["text"]
+            return "🔔 " + data["candidates"][0]["content"]["parts"][0]["text"]
     except:
         pass
     
-    # 如果失敗，改用基本版
-    return get_weather()
+    return "🔔 目前無法取得預警資訊"
 
-# 預設位置 (台北)
 DEFAULT_LOCATION = (25.0330, 121.5654)
 
 def set_location(lat, lon):
-    """
-    設定預設位置
-    lat: 緯度
-    lon: 經度
-    """
     global DEFAULT_LOCATION
     DEFAULT_LOCATION = (lat, lon)
+
+def get_weather_yilan():
+    """宜蘭天氣"""
+    return get_weather(24.7021, 121.7377)
+
+def get_weather_taichung():
+    """台中天氣"""
+    return get_weather(24.1477, 120.6736)
+
+def get_weather_kaohsiung():
+    """高雄天氣"""
+    return get_weather(22.6273, 120.3014)

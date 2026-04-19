@@ -1,9 +1,6 @@
 """
-Telegram 天氣機器人主程式 - 智能互動版
-功能：
-- 天氣查詢、新聞查詢、股市查詢
-- AI 智慧對話（帶記憶）
-- 互動選單
+Telegram 智能機器人 - 完整版
+功能：天氣、新聞、股市、電影、翻譯、匯率、預警
 """
 
 import requests
@@ -11,43 +8,36 @@ import time
 import os
 
 import weather
-import news
+import news as news_module
 import stock
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8789469759:AAGIeXhWe9FrG7218TUEvVfK4-I2Z34dg0o")
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 GEMINI_API_KEY = "AIzaSyABqGlwKaKo4lQQ4XYpA_FIUXNU61d9jfs"
 
-# 對話記憶（Simple）
 conversation_history = {}
 
 def get_ai_response(prompt, user_id):
-    """
-    帶記憶的 AI 對話
-    會記住之前的對話
-    """
-    # 取得歷史
+    """帶記憶的 AI 對話"""
     history = conversation_history.get(user_id, [])
     
-    # 建立對話上下文
     context = ""
     if history:
-        # 取最近 3 輪對話
-        recent = history[-6:]  # 3 questions + 3 answers
+        recent = history[-6:]
         for i in range(0, len(recent), 2):
             if i < len(recent):
-                context += f"使用者: {recent[i]}\n"
+                context += f"User: {recent[i]}\n"
             if i+1 < len(recent):
-                context += f"你: {recent[i+1]}\n"
+                context += f"You: {recent[i+1]}\n"
     
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
     
-    full_prompt = f"""你是一個友善的台灣資訊助手，請用輕鬆自然的繁體中文對話。
+    full_prompt = f"""你是友善的台灣生活助手，用輕鬆自然的繁對話。
 
 {context}
-使用者: {prompt}
+User: {prompt}
 
-請用自然的對話方式回答，不要用列表格式。如果涉及投資，請提醒這只是參考。
+用自然對話回答。投資問題提醒只是參考。
 """
     
     payload = {"contents": [{"parts": [{"text": full_prompt}]}]}
@@ -60,13 +50,11 @@ def get_ai_response(prompt, user_id):
         if "candidates" in data:
             response = data["candidates"][0]["content"]["parts"][0]["text"]
             
-            # 記住對話
             if user_id not in conversation_history:
                 conversation_history[user_id] = []
             conversation_history[user_id].append(prompt)
             conversation_history[user_id].append(response)
             
-            # 只記住最近 10 輪
             if len(conversation_history[user_id]) > 20:
                 conversation_history[user_id] = conversation_history[user_id][-20:]
             
@@ -74,7 +62,7 @@ def get_ai_response(prompt, user_id):
     except:
         pass
     
-    return "嗯...讓我想一想再回答你～"
+    return "讓我、組織一下語言..."
 
 def get_updates(offset):
     return requests.get(f"{API_URL}/getUpdates", params={"offset": offset}).json()
@@ -83,21 +71,26 @@ def send_message(chat_id, text):
     requests.post(f"{API_URL}/sendMessage", json={"chat_id": chat_id, "text": text})
 
 def send_menu(chat_id):
-    """發送互動選單"""
     menu = """📋 請選擇功能：
 
-1️⃣ 天氣 - 查詢天氣
-2️⃣ 新聞 - 最新新聞
-3️⃣ 股市 - 查詢股價
-4️⃣ 熱門 - 熱門股票
-5️⃣ 股市新聞 - 股市新聞
-6️⃣ 評價 2330 - 本益比/殖利率
+🌤 天氣 - 查詢目前天氣
+📅 天氣預報 - 一週天氣
+🔔 天氣預警 - 地震/颱風
+📰 新聞 - 最新新聞
+🎬 電影 - 熱映中電影
+💱 匯率 - 美金/日幣/歐元
 
-💬 或者直接問我任何問題！"""
+📈 股市 - 2330股價
+📊 熱門股票 - Top 10
+📉 評價 2330 - 本益比/殖利率
+
+🌐 翻譯 hello - 中英翻譯
+💬 聊天 - AI對話
+
+💡 直接輸入功能名稱即可！"""
     send_message(chat_id, menu)
 
 print("🤖 智能機器人啟動中...")
-print("💡 輸入「選單」或「功能」查看選單")
 
 offset = None
 
@@ -113,43 +106,71 @@ while True:
                     chat_id = result["message"]["chat"]["id"]
                     user_id = str(chat_id)
                     text = result["message"]["text"]
+                    text_lower = text.lower()
                     
-                    # 歡迎新使用者 或 輸入選單
+                    # 選單
                     if "選單" in text or "功能" in text or "/start" in text:
                         send_menu(chat_id)
-                        
+                    
+                    # 天氣相關
+                    elif "天氣預報" in text or "一週" in text or "一周" in text:
+                        send_message(chat_id, weather.get_weather_forecast())
+                    
+                    elif "天氣預警" in text or "預警" in text or "地震" in text or "颱風" in text:
+                        send_message(chat_id, weather.get_weather_alert())
+                    
                     elif "天氣" in text:
                         send_message(chat_id, weather.get_weather())
                         
-                    elif "新聞" in text and "股市" not in text:
-                        send_message(chat_id, news.get_news())
+                    # 新聞電影
+                    elif "電影" in text:
+                        send_message(chat_id, news_module.get_movies())
+                    
+                    elif "新聞" in text:
+                        send_message(chat_id, news_module.get_news())
+                    
+                    # 匯率
+                    elif "匯率" in text:
+                        send_message(chat_id, news_module.get_exchange_rate())
+                    
+                    # 翻譯
+                    elif "翻譯" in text or "translate" in text_lower:
+                        # 取出翻譯內容
+                        import re
+                        # 格式: 翻譯 hello 或 translate hello
+                        match = re.search(r'[:\s]+([a-zA-Z].+)', text, re.IGNORECASE)
+                        if match:
+                            content = match.group(1).strip()
+                            send_message(chat_id, news_module.translate_english(content))
+                        else:
+                            send_message(chat_id, "📝 格式：翻譯 hello（翻譯英文）\n或 翻譯 你好（翻譯成英文）")
+                    
+                    # 股市相關
+                    elif "評價" in text or "本益比" in text or "殖利率" in text:
+                        import re
+                        match = re.search(r'(\d{4,6})', text)
+                        symbol = match.group(1) if match else "2330"
+                        send_message(chat_id, stock.get_valuation(symbol))
                         
+                    elif "熱門" in text or "top" in text_lower:
+                        send_message(chat_id, stock.get_top50())
+                    
                     elif "股市" in text or "股票" in text:
                         import re
                         match = re.search(r'(\d{4,6})', text)
                         symbol = match.group(1) if match else "2330"
-                        
-                        if "評價" in text or "本益比" in text or "殖利率" in text:
-                            send_message(chat_id, stock.get_valuation(symbol))
-                        else:
-                            send_message(chat_id, stock.get_stock(symbol))
-                        
-                    elif "熱門" in text or "TOP" in text.upper():
-                        send_message(chat_id, stock.get_top50())
+                        send_message(chat_id, stock.get_stock(symbol))
                     
                     elif "股市新聞" in text:
                         send_message(chat_id, stock.get_stock_news())
                     
-                    # 其他交給 AI（帶記憶）
+                    # AI 對話
                     else:
-                        # 回覆思考中
-                        send_message(chat_id, "🤔 讓我想想...")
-                        
+                        send_message(chat_id, "🤔 讓我想一下...")
                         response = get_ai_response(text, user_id)
                         send_message(chat_id, response)
                         
-                        # 提醒可以用選單
-                        send_message(chat_id, "\n💡 輸入「選單」查看所有功能～")
+                        send_message(chat_id, "\n💡 輸入「選單」查看所有功能")
         
         time.sleep(1)
         
