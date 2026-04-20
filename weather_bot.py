@@ -1,8 +1,7 @@
 """
-Telegram 智能機器人 - Web版
+Telegram 智能機器人 - Polling版
 """
 
-from flask import Flask, request
 import requests
 import time
 import os
@@ -14,17 +13,11 @@ import news as news_module
 import stock
 import ledger
 
-app = Flask(__name__)
-
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8789469759:AAGIeXhWe9FrG7218TUEvVfK4-I2Z34dg0o")
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 GEMINI_API_KEY = "AIzaSyABqGlwKaKo4lQQ4XYpA_FIUXNU61d9jfs"
 
 conversation_history = {}
-
-def send_message(chat_id, text):
-    """發送訊息"""
-    requests.post(f"{API_URL}/sendMessage", json={"chat_id": chat_id, "text": text})
 
 def get_ai_response(prompt, user_id):
     """AI 回覆"""
@@ -65,6 +58,12 @@ def get_ai_response(prompt, user_id):
     except:
         pass
     return "👀 讓我想想..."
+
+def get_updates(offset):
+    return requests.get(f"{API_URL}/getUpdates", params={"offset": offset}).json()
+
+def send_message(chat_id, text):
+    requests.post(f"{API_URL}/sendMessage", json={"chat_id": chat_id, "text": text})
 
 def handle_message(chat_id, text, user_id):
     """處理訊息"""
@@ -129,24 +128,20 @@ def handle_message(chat_id, text, user_id):
         response = get_ai_response(text, user_id)
         send_message(chat_id, response)
 
-@app.route("/", methods=["POST"])
-def webhook():
-    """Webhook 處理"""
+print("🤖 智能機器人啟動中...")
+
+offset = None
+while True:
     try:
-        update = request.get_json()
-        if "message" in update:
-            chat_id = update["message"]["chat"]["id"]
-            user_id = str(chat_id)
-            text = update["message"].get("text", "")
-            handle_message(chat_id, text, user_id)
-    except:
-        pass
-    return "OK"
-
-@app.route("/health")
-def health():
-    return "OK"
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+        updates = get_updates(offset)
+        if updates["ok"]:
+            for result in updates["result"]:
+                offset = result["update_id"] + 1
+                if "message" in result:
+                    chat_id = result["message"]["chat"]["id"]
+                    user_id = str(chat_id)
+                    text = result["message"]["text"]
+                    handle_message(chat_id, text, user_id)
+        time.sleep(1)
+    except KeyboardInterrupt:
+        break
