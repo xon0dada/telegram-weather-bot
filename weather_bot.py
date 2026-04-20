@@ -1,16 +1,20 @@
 """
-Telegram 智能機器人 - 完整版
-功能：天氣、新聞、股市、電影、翻譯、匯率、預警
+Telegram 智能機器人 - Web版
 """
 
+from flask import Flask, request
 import requests
 import time
 import os
+import json
+import re
 
 import weather
 import news as news_module
 import stock
 import ledger
+
+app = Flask(__name__)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8789469759:AAGIeXhWe9FrG7218TUEvVfK4-I2Z34dg0o")
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
@@ -18,10 +22,13 @@ GEMINI_API_KEY = "AIzaSyABqGlwKaKo4lQQ4XYpA_FIUXNU61d9jfs"
 
 conversation_history = {}
 
+def send_message(chat_id, text):
+    """發送訊息"""
+    requests.post(f"{API_URL}/sendMessage", json={"chat_id": chat_id, "text": text})
+
 def get_ai_response(prompt, user_id):
-    """帶記憶的 AI 對話"""
+    """AI 回覆"""
     history = conversation_history.get(user_id, [])
-    
     context = ""
     if history:
         recent = history[-6:]
@@ -32,214 +39,114 @@ def get_ai_response(prompt, user_id):
                 context += f"You: {recent[i+1]}\n"
     
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
-    
     full_prompt = f"""你是我的好朋友，我們在LINE上面聊天用。
 
-我們的對話紀錄：
 {context}
-
 對方說：{prompt}
 
-請用輕鬆、自然、口語化的方式回覆，就像朋友聊天一樣。可以使用表情符號，但不要用列表或編號。盡量簡短一點，像真的在聊天。
+請用輕鬆、自然、口語化的方式回覆，就像朋友聊天一樣。可以使用表情符號，但不要用列表或編號。盡量簡短一點。
 
-如果聊到投資股票相關，要記得說「這只是參考喔，投資有風險，進場要小心～」
+如果聊到投資股票相關，要記得說「這只是參考喔，投資有風險～」
 """
-    
     payload = {"contents": [{"parts": [{"text": full_prompt}]}]}
     headers = {"Content-Type": "application/json"}
     
     try:
         r = requests.post(url, json=payload, headers=headers, timeout=15)
         data = r.json()
-        
         if "candidates" in data:
             response = data["candidates"][0]["content"]["parts"][0]["text"]
-            
             if user_id not in conversation_history:
                 conversation_history[user_id] = []
-            conversation_history[user_id].append(prompt)
-            conversation_history[user_id].append(response)
-            
+            conversation_history[user_id].extend([prompt, response])
             if len(conversation_history[user_id]) > 20:
                 conversation_history[user_id] = conversation_history[user_id][-20:]
-            
             return response
     except:
         pass
-    
     return "👀 讓我想想..."
 
-def get_updates(offset):
-    return requests.get(f"{API_URL}/getUpdates", params={"offset": offset}).json()
+def handle_message(chat_id, text, user_id):
+    """處理訊息"""
+    text_lower = text.lower()
+    
+    # 選單
+    if "選單" in text or "功能" in text or "/start" in text:
+        menu = """📋 請選擇功能：
 
-def send_message(chat_id, text):
-    requests.post(f"{API_URL}/sendMessage", json={"chat_id": chat_id, "text": text})
-
-def send_menu(chat_id):
-    menu = """📋 請選擇功能：
-
-🌤 天氣 - 查詢目前天氣
-📅 天氣預報 - 一週天氣
-🔔 天氣預警 - 地震/颱風
-📰 新聞 - 最新新聞
-🎬 電影 - 熱映中電影
-💱 匯率 - 美金/日幣/歐元
-
-📈 股市 - 2330股價
-📊 熱門股票 - Top 10
-📉 評價 2330 - 本益比/殖利率
-
-💰 記帳 - 收支記錄
-💵 收入 500 - 記錄收入
-💸 支出 300 餐飲 - 記錄支出
+🌤 天氣 - 天氣
+📅 天氣預報 - 一週天氣  
+📝 分類 - 分類清單
 📊 餘額 - 查看餘額
 📝 記錄 - 查看記錄
 
-🌐 翻譯 hello - 中英翻譯
-💬 聊天 - AI對話
+💰 收入 500 - 記錄收入
+💸 支出 300 - 記錄支出
+"""
+        send_message(chat_id, menu)
+    
+    # 天氣
+    elif "天氣預報" in text or "一週" in text:
+        send_message(chat_id, weather.get_weather_forecast())
+    elif "天氣" in text:
+        send_message(chat_id, weather.get_weather())
+    
+    # 記帳
+    elif "收入" in text or ("+" in text and re.search(r'\d', text)):
+        match = re.search(r'(\d+)', text)
+        if match:
+            amount = int(match.group(1))
+            note = text.replace("收入", "").replace("+", "").replace(str(amount), "").strip()
+            send_message(chat_id, ledger.add_income(amount, note))
+    
+    elif "支出" in text or "-" in text:
+        match = re.search(r'(\d+)', text)
+        if match:
+            amount = int(match.group(1))
+            category = "📦 其他"
+            cats = ["餐飲", "交通", "購物", "娛樂", "醫療", "房租", "投資", "電話", "電費", "3C", "服飾", "禮物", "旅遊", "學習", "寵物"]
+            cat_emojis = {"餐飲": "🍔 餐飲", "交通": "🚗 交通", "購物": "🛒 購物", "娛樂": "🎬 娛樂", "醫療": "🏥 醫療", "房租": "🏠 房租", "投資": "💰 投資", "電話": "📱 電話", "電費": "💡 電費", "3C": "💻 3C", "服飾": "👕 服飾", "禮物": "🎁 禮物", "旅遊": "✈️ 旅遊", "學習": "📚 學習", "寵物": "🐱 寵物"}
+            for cat in cats:
+                if cat in text:
+                    category = cat_emojis.get(cat, f"📦 {cat}")
+                    text = text.replace(cat, "")
+                    break
+            note = re.sub(r'\d+', '', text).replace("支出", "").replace("-", "").strip()
+            send_message(chat_id, ledger.add_expense(amount, category, note if note else "-"))
+    
+    elif "餘額" in text or "帳本" in text:
+        send_message(chat_id, ledger.get_balance())
+    elif "記錄" in text:
+        send_message(chat_id, ledger.get_records())
+    elif "分類" in text:
+        send_message(chat_id, ledger.get_categories())
+    elif "清除" in text:
+        send_message(chat_id, ledger.clear_records())
+    
+    # AI 對話
+    else:
+        send_message(chat_id, "🤔 讓我想一下...")
+        response = get_ai_response(text, user_id)
+        send_message(chat_id, response)
 
-💡 直接輸入功能名稱即可！"""
-    send_message(chat_id, menu)
-
-print("🤖 智能機器人啟動中...")
-
-offset = None
-
-while True:
+@app.route("/", methods=["POST"])
+def webhook():
+    """Webhook 處理"""
     try:
-        updates = get_updates(offset)
-        
-        if updates["ok"]:
-            for result in updates["result"]:
-                offset = result["update_id"] + 1
-                
-                if "message" in result:
-                    chat_id = result["message"]["chat"]["id"]
-                    user_id = str(chat_id)
-                    text = result["message"]["text"]
-                    text_lower = text.lower()
-                    
-                    # 選單
-                    if "選單" in text or "功能" in text or "/start" in text:
-                        send_menu(chat_id)
-                    
-                    # 天氣相關
-                    elif "天氣預報" in text or "一週" in text or "一周" in text:
-                        send_message(chat_id, weather.get_weather_forecast())
-                    
-                    elif "天氣預警" in text or "預警" in text or "地震" in text or "颱風" in text:
-                        send_message(chat_id, weather.get_weather_alert())
-                    
-                    elif "天氣" in text:
-                        send_message(chat_id, weather.get_weather())
-                        
-                    # 新聞電影
-                    elif "電影" in text:
-                        send_message(chat_id, news_module.get_movies())
-                    
-                    elif "新聞" in text:
-                        send_message(chat_id, news_module.get_news())
-                    
-                    # 匯率
-                    elif "匯率" in text:
-                        send_message(chat_id, news_module.get_exchange_rate())
-                    
-                    # 翻譯
-                    elif "翻譯" in text or "translate" in text_lower:
-                        # 取出翻譯內容
-                        import re
-                        # 格式: 翻譯 hello 或 translate hello
-                        match = re.search(r'[:\s]+([a-zA-Z].+)', text, re.IGNORECASE)
-                        if match:
-                            content = match.group(1).strip()
-                            send_message(chat_id, news_module.translate_english(content))
-                        else:
-                            send_message(chat_id, "📝 格式：翻譯 hello（翻譯英文）\n或 翻譯 你好（翻譯成英文）")
-                    
-                    # 股市相關
-                    elif "評價" in text or "本益比" in text or "殖利率" in text:
-                        import re
-                        match = re.search(r'(\d{4,6})', text)
-                        symbol = match.group(1) if match else "2330"
-                        send_message(chat_id, stock.get_valuation(symbol))
-                        
-                    elif "熱門" in text or "top" in text_lower:
-                        send_message(chat_id, stock.get_top50())
-                    
-                    elif "股市" in text or "股票" in text:
-                        import re
-                        match = re.search(r'(\d{4,6})', text)
-                        symbol = match.group(1) if match else "2330"
-                        send_message(chat_id, stock.get_stock(symbol))
-                    
-                    elif "股市新聞" in text:
-                        send_message(chat_id, stock.get_stock_news())
-                    
-                    # 記帳功能
-                    elif "收入" in text or "+" in text:
-                        import re
-                        match = re.search(r'(\d+)', text)
-                        if match:
-                            amount = int(match.group(1))
-                            note = text.replace("收入", "").replace("+", "").replace(str(amount), "").strip()
-                            send_message(chat_id, ledger.add_income(amount, note))
-                        else:
-                            send_message(chat_id, "📝 格式：收入 500 或 +500")
-                    
-                    elif "支出" in text or "-" in text:
-                        import re
-                        match = re.search(r'(\d+)', text)
-                        if match:
-                            amount = int(match.group(1))
-                            # 預設分類
-                            category = "📦 其他"
-                            
-                            # 嘗試找分類關鍵字
-                            cats = ["餐飲", "交通", "購物", "娛樂", "醫療", "房租", "投資", "電話", "電費", "3C", "服飾", "禮物", "旅遊", "學習", "寵物"]
-                            cat_emojis = {
-                                "餐飲": "🍔 餐飲", "交通": "🚗 交通", "購物": "🛒 購物", 
-                                "娛樂": "🎬 娛樂", "醫療": "🏥 醫療", "房租": "🏠 房租", 
-                                "投資": "💰 投資", "電話": "📱 電話", "電費": "💡 電費",
-                                "3C": "💻 3C", "服飾": "👕 服飾", "禮物": "🎁 禮物",
-                                "旅遊": "✈️ 旅遊", "學習": "📚 學習", "寵物": "🐱 寵物"
-                            }
-                            
-                            for cat in cats:
-                                if cat in text:
-                                    category = cat_emojis.get(cat, f"📦 {cat}")
-                                    text = text.replace(cat, "")
-                                    break
-                            
-                            # 移除數字和其他關鍵字
-                            note = re.sub(r'\d+', '', text).replace("支出", "").replace("-", "").strip()
-                            if not note:
-                                note = "-"
-                            
-                            send_message(chat_id, ledger.add_expense(amount, category, note))
-                        else:
-                            send_message(chat_id, "📝 格式：支出 300 餐飲\n或：支出 300")
-                    
-                    elif "餘額" in text or "帳本" in text:
-                        send_message(chat_id, ledger.get_balance())
-                    
-                    elif "記錄" in text:
-                        send_message(chat_id, ledger.get_records())
-                    
-                    elif "清除" in text:
-                        send_message(chat_id, ledger.clear_records())
-                    
-                    elif "分類" in text:
-                        send_message(chat_id, ledger.get_categories())
-                    
-                    # AI 對話
-                    else:
-                        send_message(chat_id, "🤔 讓我想一下...")
-                        response = get_ai_response(text, user_id)
-                        send_message(chat_id, response)
-                        
-                        send_message(chat_id, "\n💡 輸入「選單」查看所有功能")
-        
-        time.sleep(1)
-        
-    except KeyboardInterrupt:
-        break
+        update = request.get_json()
+        if "message" in update:
+            chat_id = update["message"]["chat"]["id"]
+            user_id = str(chat_id)
+            text = update["message"].get("text", "")
+            handle_message(chat_id, text, user_id)
+    except:
+        pass
+    return "OK"
+
+@app.route("/health")
+def health():
+    return "OK"
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
